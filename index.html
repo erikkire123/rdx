@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Leaderboard Admin</title>
+<style>
+:root{--bg:#0a0c11;--s:rgba(255,255,255,.04);--s2:rgba(255,255,255,.08);--b:rgba(255,255,255,.08);--t:#eef1f6;--d:#98a0ae;--a:#3b9dff;--g:#34d17c;--r:#ff5a4e;--gold:#ffd97a;--silver:#c9d1dc;--bronze:#e0a06a}
+*{box-sizing:border-box;margin:0}
+body{background:radial-gradient(900px 400px at 15% -10%,rgba(59,157,255,.12),transparent 60%),var(--bg);color:var(--t);font:14px Inter,-apple-system,sans-serif;min-height:100vh}
+.wrap{max-width:1000px;margin:0 auto;padding:28px 18px 80px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--b);margin-bottom:20px}
+h1{font-size:1.4rem;letter-spacing:-.02em}.sub{color:var(--d);font-size:12px;margin-top:2px}
+.tabs{display:inline-flex;flex-wrap:wrap;gap:4px;background:var(--s);border:1px solid var(--b);border-radius:12px;padding:4px;margin-bottom:18px}
+.tab{background:none;border:0;color:var(--d);padding:7px 14px;border-radius:9px;cursor:pointer;font:inherit;font-weight:550}
+.tab.on{background:var(--s2);color:var(--t)}
+.card{background:var(--s);border:1px solid var(--b);border-radius:14px;padding:14px;margin-bottom:12px}
+.slot{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--b);border-radius:12px;margin-bottom:8px;background:var(--s)}
+.rk{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-weight:700;background:var(--s2)}
+.r1 .rk{background:linear-gradient(145deg,#ffd97a,#f0a500);color:#2b1c00}.r2 .rk{background:linear-gradient(145deg,#e6ebf2,#9aa6b5);color:#1b2028}.r3 .rk{background:linear-gradient(145deg,#e0a06a,#b56c34);color:#2a1503}
+.r1{border-color:#ffd97a66;box-shadow:0 0 24px #ffd97a1a}
+.info{flex:1;min-width:0}.nm{font-weight:600}.meta{color:var(--d);font-size:12px;margin-top:2px}
+.w{color:var(--g)}.l{color:var(--r)}
+input,select{background:#0e1118;border:1px solid var(--b);border-radius:9px;color:var(--t);padding:8px 10px;font:inherit;min-width:0}
+input:focus,select:focus{outline:2px solid var(--a);outline-offset:1px}
+button.p,button.g{border-radius:9px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer;border:1px solid var(--b)}
+button.p{background:var(--a);color:#fff;border-color:transparent}button.g{background:var(--s2);color:var(--t)}button.g.x:hover{color:var(--r)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.login{max-width:340px;margin:12vh auto}.login .card{display:flex;flex-direction:column;gap:10px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#171b24;border:1px solid var(--b);padding:10px 16px;border-radius:11px;opacity:0;transition:.25s;pointer-events:none}
+.toast.show{opacity:1}.toast.err{color:var(--r)}
+.empty{color:var(--d);text-align:center;padding:18px}
+</style></head><body>
+<div class="wrap" id="app"></div><div class="toast" id="toast"></div>
+<script src="env.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+const REGIONS=['ASIA','NA','EU','SA'];
+const sb=supabase.createClient(ENV.SUPABASE_URL,ENV.SUPABASE_PUBLISHABLE_KEY);
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let me=null,tab='ASIA',D={players:[],stats:{},lb:[],matches:[],logs:[]};
+function toast(m,err){const t=$('toast');t.textContent=m;t.className='toast show'+(err?' err':'');clearTimeout(t._t);t._t=setTimeout(()=>t.className='toast',2800);}
+const canEdit=r=>me&&(me.role==='super_admin'||(me.role==='manager'&&me.permitted_regions.includes(r)));
+const canMatch=()=>me&&['super_admin','manager','moderator'].includes(me.role);
+const wr=s=>s&&s.total_matches?Math.round(s.wins/s.total_matches*100)+'%':'0%';
+
+async function boot(){
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session)return loginView();
+  const {data,error}=await sb.from('administrator_profiles').select('*').eq('id',session.user.id).maybeSingle();
+  if(error||!data){await sb.auth.signOut();loginView('This account is not an administrator.');return;}
+  me=data;await load();view();
+}
+function loginView(msg){
+  $('app').innerHTML=`<div class="login"><h1>Leaderboard Admin</h1><p class="sub" style="margin-bottom:14px">Administrators only</p>
+  <div class="card"><input id="em" type="email" placeholder="Email" autocomplete="username"><input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+  <button class="p" id="go">Sign in</button><div class="sub" style="color:var(--r)">${esc(msg||'')}</div></div></div>`;
+  const go=async()=>{const {error}=await sb.auth.signInWithPassword({email:$('em').value.trim(),password:$('pw').value});
+    if(error)return loginView(error.message);boot();};
+  $('go').onclick=go;$('pw').onkeydown=e=>{if(e.key==='Enter')go();};
+}
+async function load(){
+  const [p,s,l,m,a]=await Promise.all([
+    sb.from('players').select('*').neq('status','archived').order('display_name'),
+    sb.from('player_statistics').select('*'),
+    sb.from('leaderboard_entries').select('*'),
+    sb.from('matches').select('*').order('match_date',{ascending:false}).limit(100),
+    sb.from('activity_logs').select('*').order('created_at',{ascending:false}).limit(60)]);
+  D.players=p.data||[];D.stats=Object.fromEntries((s.data||[]).map(x=>[x.player_id,x]));
+  D.lb=l.data||[];D.matches=m.data||[];D.logs=a.data||[];
+  if(a.error&&me.role!=='viewer'&&me.role!=='moderator')toast(a.error.message,true);
+}
+const pname=id=>D.players.find(p=>p.id===id)?.display_name||'Unknown';
+function view(){
+  const tabs=[...REGIONS,'Players','Matches','Log'];
+  $('app').innerHTML=`<header><div><h1>Leaderboard Admin</h1><div class="sub">${esc(me.display_name)} · ${esc(me.role.replace('_',' '))}</div></div>
+  <button class="g" id="out">Sign out</button></header>
+  <div class="tabs">${tabs.map(t=>`<button class="tab ${t===tab?'on':''}" data-t="${t}">${t}</button>`).join('')}</div><div id="body"></div>`;
+  $('out').onclick=async()=>{await sb.auth.signOut();me=null;loginView();};
+  document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{tab=b.dataset.t;view();});
+  ({Players:playersView,Matches:matchesView,Log:logView}[tab]||regionView)();
+}
+async function act(p,ok){const {error}=await p;if(error)return toast(error.message,true);toast(ok);await load();view();}
+
+function regionView(){
+  const reg=tab,edit=canEdit(reg),entries=D.lb.filter(e=>e.region===reg);
+  const pool=D.players.filter(p=>p.region===reg&&!entries.some(e=>e.player_id===p.id));
+  let h='';
+  for(let r=1;r<=10;r++){
+    const e=entries.find(x=>x.rank===r),s=e&&D.stats[e.player_id],p=e&&D.players.find(x=>x.id===e.player_id);
+    const mv=e&&e.previous_rank?(e.previous_rank>r?`<span class="w">▲${e.previous_rank-r}</span>`:e.previous_rank<r?`<span class="l">▼${r-e.previous_rank}</span>`:''):e?'NEW':'';
+    h+=`<div class="slot r${r}"><div class="rk">${r}</div>`+(p?
+      `<div class="info"><div class="nm">${esc(p.display_name)} ${mv}</div><div class="meta">${s?`${s.rating} pts · <span class="w">${s.wins}W</span> <span class="l">${s.losses}L</span> · ${wr(s)}`:''}</div></div>
+       ${edit?`<select data-mv="${p.id}">${[...Array(10)].map((_,i)=>`<option ${i+1===r?'selected':''}>${i+1}</option>`).join('')}</select><button class="g x" data-clr="${e.id}">Clear</button>`:''}`:
+      `<div class="info meta">Empty slot</div>${edit&&pool.length?`<select data-fill="${r}"><option value="">Assign player…</option>${pool.map(p=>`<option value="${p.id}">${esc(p.display_name)}</option>`).join('')}</select>`:''}`)+`</div>`;
+  }
+  $('body').innerHTML=h+(edit?'':'<div class="sub">Read-only for your role in this region.</div>');
+  document.querySelectorAll('[data-mv]').forEach(s=>s.onchange=()=>act(sb.rpc('set_rank',{p_player:s.dataset.mv,p_region:reg,p_rank:+s.value}),'Rank updated'));
+  document.querySelectorAll('[data-fill]').forEach(s=>s.onchange=()=>s.value&&act(sb.rpc('set_rank',{p_player:s.value,p_region:reg,p_rank:+s.dataset.fill}),'Player placed'));
+  document.querySelectorAll('[data-clr]').forEach(b=>b.onclick=()=>confirm('Clear this slot?')&&act(sb.from('leaderboard_entries').delete().eq('id',b.dataset.clr),'Slot cleared'));
+}
+function playersView(){
+  const add=me.role==='super_admin'||me.role==='manager';
+  $('body').innerHTML=(add?`<div class="card row"><input id="pn" placeholder="Display name" maxlength="40"><input id="pu" placeholder="Discord username"><input id="pi" placeholder="Discord ID" inputmode="numeric">
+    <select id="pr">${REGIONS.filter(canEdit).map(r=>`<option>${r}</option>`).join('')}</select><button class="p" id="pa">Add player</button></div>`:'')+
+  (D.players.length?D.players.map(p=>{const s=D.stats[p.id];return `<div class="slot"><div class="rk">${esc(p.display_name.slice(0,2).toUpperCase())}</div>
+    <div class="info"><div class="nm">${esc(p.display_name)} <span class="meta">${p.region}</span></div><div class="meta">${esc(p.discord_username||'')} ${p.discord_id?'· '+esc(p.discord_id):''} · ${s?`${s.wins}W ${s.losses}L (${wr(s)})`:''}</div></div>
+    ${canEdit(p.region)?`<button class="g x" data-arc="${p.id}">Archive</button>`:''}</div>`}).join(''):'<div class="empty">No players yet.</div>');
+  if(add)$('pa').onclick=()=>{const n=$('pn').value.trim();if(!n)return toast('Name required',true);
+    act(sb.from('players').insert({display_name:n,discord_username:$('pu').value.trim()||null,discord_id:$('pi').value.trim()||null,region:$('pr').value}),'Player added');};
+  document.querySelectorAll('[data-arc]').forEach(b=>b.onclick=()=>confirm('Archive this player?')&&act(sb.from('players').update({status:'archived'}).eq('id',b.dataset.arc),'Archived'));
+}
+function matchesView(){
+  const opts=D.players.map(p=>`<option value="${p.id}">${esc(p.display_name)} (${p.region})</option>`).join('');
+  $('body').innerHTML=(canMatch()?`<div class="card row"><select id="ma">${opts}</select><span class="meta">vs</span><select id="mb">${opts}</select>
+   <select id="mw"><option value="a">A wins</option><option value="b">B wins</option><option value="d">Draw</option></select>
+   <select id="mf"><option>Bo1</option><option>Bo3</option><option>Bo5</option></select><input id="me" placeholder="Event (optional)">
+   <button class="p" id="ms">Record match</button></div>`:'')+
+  (D.matches.length?D.matches.map(m=>`<div class="slot"><div class="info"><div class="nm">${esc(pname(m.player_a_id))} vs ${esc(pname(m.player_b_id))}</div>
+   <div class="meta">${m.winner_id?'Winner: '+esc(pname(m.winner_id)):'Draw'} · ${m.format} · ${new Date(m.match_date).toLocaleDateString()} · ${m.status}${m.event_name?' · '+esc(m.event_name):''}</div></div>
+   ${canMatch()&&m.status==='valid'?`<button class="g x" data-void="${m.id}">Void</button>`:''}</div>`).join(''):'<div class="empty">No matches recorded.</div>');
+  if(canMatch())$('ms').onclick=()=>{
+    const a=$('ma').value,b=$('mb').value,w=$('mw').value;if(!a||!b||a===b)return toast('Pick two different players',true);
+    const pa=D.players.find(p=>p.id===a);
+    act(sb.from('matches').insert({region:pa.region,player_a_id:a,player_b_id:b,winner_id:w==='a'?a:w==='b'?b:null,format:$('mf').value,event_name:$('me').value.trim()||null}),'Match recorded');};
+  document.querySelectorAll('[data-void]').forEach(b=>b.onclick=()=>confirm('Void this match? Stats will be recalculated.')&&act(sb.from('matches').update({status:'void'}).eq('id',b.dataset.void),'Match voided'));
+}
+function logView(){
+  $('body').innerHTML=D.logs.length?D.logs.map(l=>`<div class="slot"><div class="info"><div class="nm">${esc(l.action)} · ${esc(l.entity_type)}</div>
+  <div class="meta">${new Date(l.created_at).toLocaleString()}</div></div></div>`).join(''):'<div class="empty">No activity visible for your role.</div>';
+}
+sb.auth.onAuthStateChange(()=>{});
+boot();
+</script></body></html>
